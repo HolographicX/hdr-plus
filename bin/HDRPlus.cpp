@@ -4,6 +4,8 @@
 
 #include <Halide.h>
 
+#include <tiffio.h>
+
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <include/stb_image_write.h>
 
@@ -56,18 +58,47 @@ public:
     return output_img;
   }
 
-  static bool save_png(const std::string &dir_path, const std::string &img_name,
-                       const Halide::Runtime::Buffer<uint8_t> &img) {
-    const std::string img_path = dir_path + "/" + img_name;
-
-    const int stride_in_bytes = img.width() * img.channels();
-    if (!stbi_write_png(img_path.c_str(), img.width(), img.height(),
-                        img.channels(), img.data(), stride_in_bytes)) {
-      std::cerr << "Unable to write output image '" << img_name << "'"
-                << std::endl;
-      return false;
-    }
-    return true;
+  static bool save_tiff(const std::string &dir_path,
+                        const std::string &img_name,
+                        const Halide::Runtime::Buffer<uint8_t> &img) {
+      const std::string img_path = dir_path + "/" + img_name;
+  
+      if (img.channels() != 3) {
+          std::cerr << "TIFF saving only supports 3-channel RGB images in this example." << std::endl;
+          return false;
+      }
+  
+      TIFF *tif = TIFFOpen(img_path.c_str(), "w");
+      if (!tif) {
+          std::cerr << "Could not open " << img_path << " for writing." << std::endl;
+          return false;
+      }
+  
+      const int width = img.width();
+      const int height = img.height();
+      const int channels = img.channels(); // Should be 3
+  
+      TIFFSetField(tif, TIFFTAG_IMAGEWIDTH, width);
+      TIFFSetField(tif, TIFFTAG_IMAGELENGTH, height);
+      TIFFSetField(tif, TIFFTAG_SAMPLESPERPIXEL, channels);
+      TIFFSetField(tif, TIFFTAG_BITSPERSAMPLE, 8); // 8-bit per channel
+      TIFFSetField(tif, TIFFTAG_ORIENTATION, ORIENTATION_TOPLEFT);
+      TIFFSetField(tif, TIFFTAG_PLANARCONFIG, PLANARCONFIG_CONTIG);
+      TIFFSetField(tif, TIFFTAG_PHOTOMETRIC, PHOTOMETRIC_RGB);
+      TIFFSetField(tif, TIFFTAG_ROWSPERSTRIP, TIFFDefaultStripSize(tif, width * channels));
+  
+      // Write scanlines row-by-row
+      for (int y = 0; y < height; y++) {
+          const uint8_t *row = img.data() + (y * width * channels);
+          if (TIFFWriteScanline(tif, (tdata_t)row, y, 0) < 0) {
+              std::cerr << "Error writing scanline " << y << " to file '" << img_path << "'" << std::endl;
+              TIFFClose(tif);
+              return false;
+          }
+      }
+  
+      TIFFClose(tif);
+      return true;
   }
 };
 
@@ -123,7 +154,7 @@ int main(int argc, char *argv[]) {
 
   Halide::Runtime::Buffer<uint8_t> output = hdr_plus.process();
 
-  if (!HDRPlus::save_png(dir_path, out_name, output)) {
+  if (!HDRPlus::save_tiff(dir_path, out_name, output)) {
     return EXIT_FAILURE;
   }
 
